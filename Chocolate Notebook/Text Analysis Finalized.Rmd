@@ -1,0 +1,366 @@
+---
+title: "Image Clustering"
+output: html_notebook
+---
+
+```{r Packages}
+library(rvest) #webscraping package
+library(jpeg) #convert scraped images to jpeg
+library(xml2) #convert the xml from webpage into a list
+library(dplyr)
+library(EBImage)
+library(magick)
+library(janitor)
+
+
+#library(pdftools) # Reads pdf names into text strings
+library(tm) # Text cleaning for large corpa similar to tidytext it can help with cleaning and tokenizing
+library(quanteda) # Text cleaning for large corpa similar to tidytext tokenizing
+library(tidytext) # For analysis of text in a tidy manner including sentiment data
+library(textstem) # For stemming and lemmatizing text
+library(gutenbergr) # Project Gutenberg books
+library(wordcloud) # For world cloud
+# 
+library(lsa) # For latent semantic analysis
+library(stm) # For structural topic modeling
+library(uwot) # For umap dimensionality reduction
+library(text2vec) # For cosine similarity -
+library(kernlab) # For kernel-based cannonical correlation analysis
+library(rPref) # For pareto frontier\
+library(DT) # For interactive data tables
+library(textdata) # Database of lexicon and embeddings
+# 
+library(knitr)
+library(ggrepel)
+library(caret) # For predictive model fitting
+library(tidyverse)
+library(patchwork)
+# 
+# set.seed(888)
+# rm(list = ls()) 
+```
+ 
+## Data Cleaning and Manipulation 
+
+```{r}
+#Step 1: figure out how to scrape the data from the website for the images and names of the chocolate...need to use the rvest package to do so
+```
+
+```{r}
+
+# simple= read_html("https://gailambrosius.com/flavor/blueberry")
+# 
+# simple %>%
+# html_nodes("p") %>%
+# html_text()
+
+```
+
+
+```{r}
+
+# simple= read_html("https://gailambrosius.com/explore-flavors/learn-about-the-flavors")
+# choc_names = html_nodes(simple, ".entry-title") #got all of the names of the chocolates
+# 
+# 
+# choc_names
+```
+
+```{r Get info from website}
+
+simple= read_html("https://gailambrosius.com/explore-flavors/learn-about-the-flavors")
+info_links = as_list(html_nodes(simple, ".popup")) #got all of the names of the chocolates
+
+
+#info_links #gethis the image content
+
+
+```
+
+```{r}
+
+# attr(info_links[1][[4]], "href") #allows me to reference the attributes. 
+
+```
+
+```{r}
+#info_links[4][[1]]$div[[1]][1]
+
+# attr(info_links[1][[1]], "href")
+
+```
+
+
+```{r Data reading and building of the dataframe}
+
+attribs = list("width", "height","src", ".class", "alt", "srcset", "sizes")
+#attribs[[1]]
+
+d = c(1:length(info_links))
+c_list = c()
+width = c()
+height =c()
+src = c()
+alt = c()
+srcset = c()
+sizes = c()
+descr_list= c()
+
+for(j in d){
+    chocolate_img = info_links[j][[1]]$img
+    chocolate_name = info_links[j][[1]]$div[[1]][1]
+    # append(c_list, chocolate_name)
+    descr_link = attr(info_links[j][[1]], "href")
+    
+  # identify = c(chocolate_name)
+  for(i in attribs){
+    # identify =c(identify, attr(chocolate_img, i))
+    # if (i == "width"){
+    #   width = c(width,attr(chocolate_img, i) )
+    # }
+    # else if (i == "height"){
+    #   height = c(height,attr(chocolate_img, i) )
+    # }
+    if (i == "src"){
+      src = c(src,attr(chocolate_img, i) )
+    }
+#     else if (i == "src"){
+#       src = c(src,attr(chocolate_img, i) )
+#     }
+  }
+# df = do.call(rbind.data.frame, identify
+c_list =c(c_list, chocolate_name)
+descr_list = c(descr_list, descr_link)
+
+}
+print(descr_list)
+df <- data.frame ( 
+                  name = c_list,
+                  image_url = src,
+                  d_list = descr_list
+                  )
+
+```
+
+```{r html reading function}
+
+reader <- function(url) {
+  
+  simple= read_html(url)
+
+ x =  simple %>%
+  html_nodes("p") %>%
+  html_text()
+ 
+ # print(typeof(x[1]))
+ # print(typeof(x[2]))
+ print(paste(x[1], x[2]), sep = " ")
+  
+}
+
+
+```
+
+
+```{r Getting text using the reader function}
+df$d_list <-as.character(df$d_list)
+df["text"] = sapply(df$d_list, reader)
+df$image_url <-as.character(df$image_url)
+
+```
+
+
+## Image Clustering from John
+
+## Compute features for images
+These features describe images such as the data in the Wisconsin Cancer data. These are morphological and texture properties of images
+
+ 
+computeFeatures: Compute object features
+
+
+```{r Getting the images into jpges from the website}
+
+# library(magick)
+# image_url <- "https://gailambrosius.com/wp-content/uploads/2013/08/flavor-caramel.jpg"
+# pic <- image_read(image_url)
+# print(pic)
+
+# myurl <- df["image_url"][1,]
+# z <- tempfile(pattern = "TEST.jpg")
+# download.file(myurl,z,mode="wb")
+# pic <- readJPEG(z)
+# pic
+# #file.remove(z) # cleanup
+# display(pic)
+
+
+
+# url <- df["image_url"][1,]
+# webpage <- html_session(url)
+# link.titles <- webpage %>% html_nodes("img")
+# 
+# img.url <- link.titles[13] %>% html_attr("src")
+
+
+name = df["name"][1,]
+print(name)
+
+download.file(df["image_url"][1,], paste(name,".jpeg", sep=""), mode = "wb")
+
+
+
+```
+
+
+```{r}
+df["image_url"][1,]
+```
+
+```{r}
+
+# y = readImage("Blueberry.jpeg")
+# # f = system.file("images", "https://gailambrosius.com/wp-content/uploads/2013/08/flavor-blueberry.jpg", package="EBImage")
+# # img = readImage(f)
+# x = thresh(y, 10, 10, 0.05)
+# x = opening(x, makeBrush(5, shape='disc'))
+# x = bwlabel(x)
+# 
+# fts = computeFeatures.shape(x)
+# fts
+
+
+```
+
+```{r}
+#biocLite("EBImage")
+library (EBImage)
+Image <- readImage("Blueberry.jpeg")
+display(Image)
+Image3<-getFrame(Image,1) #changing the frame you grab does slightly change the results
+display(Image3)
+x = thresh(Image3, w=59.5, h=59.5, offset=0.05) 
+display(x)
+x = opening(x, makeBrush(11, shape='Diamond')) #helps to generate filters 
+#x = bwlabel(x) 
+display(x)
+fts = computeFeatures.shape(x) #computing morphological and texture features of image objects
+#the .shape compute features that 
+
+fts
+
+```
+
+```{r}
+haralickFeaturesBlueBerry <- computeFeatures.haralick(x, Image3)#the .shape compute features that 
+
+haralickFeaturesBlueBerry
+
+
+```
+
+
+## Test with another image
+
+
+
+#set up the ebuter loop
+
+```{r}
+#this gets all of the necessary jpegs
+#for (i in 1:nrow(df))
+df_test = data.frame()
+
+for (i in 4:16)
+{
+  choc_name = df["name"][i,]
+  print(choc_name)
+  url = df["image_url"][i,]
+  #print(url)
+  download.file(url, paste(choc_name,".jpeg", sep=""), mode = "wb")
+  file_name = paste(choc_name,".jpeg", sep="")
+  print(file_name) #Blueberry, Caramel, Cinnamon
+
+  Image <- readImage(file_name) #something is up with cinnamon
+  Image3<-getFrame(Image,2) #changing the frame you grab does slightly change the results
+  x = thresh(Image3, w=45, h=45, offset=0.05)
+  x = opening(x, makeBrush(11, shape='diamond'))
+  x = bwlabel(x)
+  fts = computeFeatures.shape(x) #computing morphological and texture features of image objects
+#the .shape compute features that
+
+
+morph = fts %>%
+  as_tibble() %>%
+  mutate(across(.cols = everything(), list(mean = mean, sd = sd))) %>%
+  mutate(count = n()) %>%
+  select(7:19)
+morph = head(morph, 1)
+morph[is.na(morph)] = 0
+
+morph$name = choc_name
+
+#print(morph)
+
+text <- computeFeatures.haralick(x, Image3)#the .shape compute features that 
+
+text = as.data.frame(text)
+
+haralickFeatures = text %>%
+  as_tibble() %>%
+  mutate(across(.cols = everything(), list(mean = mean, sd = sd))) %>%
+  select(27:78) #h.asm.s1_mean should be the first one 
+haralickFeatures  = head(haralickFeatures, 1) #remove the first row since it duplicates
+
+haralickFeatures$name = choc_name
+
+haralickFeatures[is.na(haralickFeatures)] = 0
+#print(haralickFeatures)
+
+final = merge(haralickFeatures, morph)
+
+df_test = rbind(df_test, final)
+
+#print(final)
+
+#tada = rbind(final, df)
+#rbind(df)
+# row_select = df[i,]
+# 
+# okkk = merge(final, row_select)
+# 
+# #print(okkk)
+# 
+# 
+# df_test = rbind(df_test, okkk)
+# 
+# print(df_test)
+  
+}
+
+df_test
+
+
+```
+
+
+## Old Notes
+
+```{r}
+## load and segment nucleus
+f = system.file("images", "sample.png", package="EBImage")
+img = readImage(f)
+#img
+x = thresh(img, 10, 10, 0.05)
+x = opening(x, makeBrush(5, shape='disc'))
+x = bwlabel(x)
+#display(y, title="Cell nuclei")
+#display(x, title="Segmented nuclei")
+
+ ## compute shape features
+fts = computeFeatures.shape(x)
+ft3 = computeFeatures.haralick(x,img,  properties=FALSE, haralick.nbins=32, haralick.scales=c(1, 2))
+fts
+ft3
+```
+
