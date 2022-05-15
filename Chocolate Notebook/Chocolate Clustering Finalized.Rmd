@@ -1,0 +1,649 @@
+---
+title: "Clustering Gail Ambrosius Chocolate's By Images and Textual Description "
+author: "Sofia Isabel Noejovich, John Lee"
+output: 
+  html_notebook:
+    toc: true
+    number_sections: true
+---
+
+## Load necessary packages 
+computeFeatures: Compute object features
+
+
+```{r load_packages, message=FALSE, warning=FALSE}
+
+library(rvest) #webscraping package
+library(jpeg) #convert scraped images to jpeg
+library(xml2) #convert the xml from webpage into a list
+library(dplyr)
+library(EBImage) #image processing package. May require an R update 
+#library(magick)
+library(dendextend)
+library(httr)
+library(skimr)
+
+library(cowplot)
+library(ggdendro)
+library(ggplot2)
+library(ggimage) 
+
+
+#library(pdftools) # Reads pdf names into text strings
+library(tm) # Text cleaning for large corpa similar to tidytext it can help with cleaning and tokenizing
+library(quanteda) # Text cleaning for large corpa similar to tidytext tokenizing
+library(tidytext) # For analysis of text in a tidy manner including sentiment data
+library(textstem) # For stemming and lemmatizing text
+library(gutenbergr) # Project Gutenberg books
+library(wordcloud) # For world cloud
+# 
+library(lsa) # For latent semantic analysis
+library(stm) # For structural topic modeling
+library(uwot) # For umap dimensionality reduction
+library(text2vec) # For cosine similarity -
+library(kernlab) # For kernel-based cannonical correlation analysis
+library(rPref) # For pareto frontier\
+library(DT) # For interactive data tables
+library(textdata) # Database of lexicon and embeddings
+# 
+library(knitr)
+library(ggrepel)
+library(caret) # For predictive model fitting
+library(tidyverse)
+library(patchwork)
+library(base)
+# 
+# set.seed(888)
+# rm(list = ls()) 
+```
+ 
+## Obtain high-level data of the chocolates (should only need to run once!)
+When webscraping, there is a certain etiquette one should follow. If we send too many requests to a website at once, it can lead to the website banning us or putting us in "timeout" for requests. Therefore, it's important in webscraping to be mindful of the number of requests you send. The first step I took was to gather the html data into a file, and then save the html file so we do not have to make additional requests at this step. 
+
+### Scrape the data and save to html file 
+I have had a few instances where this caused by R to abort. Make sure you have enough RAM to read in the html file.
+
+```{r Get info from website}
+
+url = "https://gailambrosius.com/explore-flavors/learn-about-the-flavors"
+
+get_object = GET(url)
+cat(content(get_object, "text"), file="scrape.html") #save the url to an html file called scrape. 
+```
+
+```{r}
+simple = read_html("scrape.html")
+info_links = as_list(html_nodes(simple, ".popup")) #gets html info into parasable list 
+
+```
+
+### Build an initial dataframe of the chocolates
+Figuring out how to parse through the html file was the most time consuming step. My strategy was to extract as much as I could from the main page, which included the names of the chocolates, link to the images, and links to the textual data. I started off extracting as many features as I could with the attribs list, so that I could see what data was available.
+
+```{r}
+
+attribs = list("width", "height","src", ".class", "alt", "srcset", "sizes") #attributes that are available for the images that might be important
+
+info.list = c(1:length(info_links)) #length of info_links information for referencing the right area
+c.list = c() #get the list of chocolate names
+src.list = c() #create a list of the image urls
+descr.list= c() #create a list of the image descriptions
+
+for(j in info.list){
+    chocolate_img = info_links[j][[1]]$img #get url to the chocolate image
+    chocolate_name = info_links[j][[1]]$div[[1]][1] #get the name of the chocolate
+    descr_link = attr(info_links[j][[1]], "href") #get the link to the chocolate description 
+  for(i in attribs){
+    if (i == "src"){
+      src.list = c(src.list,attr(chocolate_img, i) )
+    }
+  }
+c.list =c(c.list, chocolate_name) #append chocolate names to a list 
+descr.list = c(descr.list, descr_link) #apppend description urls to a list description list
+
+}
+
+df <- data.frame (  #create a dataframe of the chocolate names, images, and link to textual descriptions
+                  name = c.list,
+                  image_url = src.list,
+                  d_list = descr.list
+                  )
+
+
+df[3,1] = "Cinnamon and Cayenne" #updated the name of Cinnamon and Cayenne because I found out later that because it was written as "Cinnamon/Cayenne", some functions were confused with the "/" symbol. 
+
+
+df[11,1] = "Vanilla"
+
+
+```
+
+
+## Clean and Prepare Text Descriptions of the Chocolates 
+### Apply reader function to extract chocolate descriptions
+I then created a function that is going to take the link of each chocolate and get the information. I used this function so that it could be applied to each column. 
+
+```{r html reading function}
+reader <- function(url) {
+  
+  simple= read_html(url) #changed this from "url"...see if this changes anything 
+
+ x =  simple %>%
+  html_nodes("p") %>%
+  html_text()
+ 
+ print(paste(x[1], x[2]), sep = " ")
+  
+}
+
+
+```
+I applied the reader function to the urls with textual data so I could systematically extract text. Ideally, you should only need to extract and run this function only once so that you are not scraping the webpage each time. 
+
+```{r Getting text using the reader function}
+
+df$d_list <-as.character(df$d_list)
+df["text"] = sapply(df$d_list, reader)
+df$image_url <-as.character(df$image_url)
+
+
+```
+
+### Tokenize and clean chocolate descriptions 
+In this step, I cleaned the textual data of the chocolate description using the methodology from Exercise 5. 
+
+```{r}
+## Clean data by "searches and replace" statements 
+df$text = gsub('[0-9]+', '', df$text) # Removes words that include numbers
+df$text = gsub('[.]+', '', df$text) # Removes words with periods
+df$text = gsub('doi', '', df$text) # Removes non-word "doi"
+df$text = gsub('fig', '', df$text) #
+df$text = gsub('zij', '', df$text) 
+df$text = gsub('nib', '', df$text) 
+df$text = gsub("it's", '', df$text) 
+df$text = gsub("It's", '', df$text) 
+df$text = gsub("it", '', df$text) 
+df$text = gsub("Tt", '', df$text) 
+df$text = gsub("like", '', df$text)
+df$text = gsub("just", '', df$text) 
+df$text = gsub("madison", '', df$text)
+df$text = gsub("Madison", '', df$text)
+df$text = gsub("make", '', df$text)
+df$text = gsub("kitchen", '', df$text)
+
+```
+
+
+```{r tokenize_text}
+## Tokenize based on word as token and remove punctuation and convert to lower case
+text.df = df %>% 
+    unnest_tokens(term, text, token = "words", 
+                 to_lower = TRUE, 
+                 strip_punct = TRUE) 
+  
+## Remove one-letter and two-letter words
+  text.df = text.df %>% filter(str_length(term)>2)
+  
+## Remove very long words--spurious words created by pdf reader
+  text.df = text.df %>% filter(str_length(term)<15)
+  
+## Remove stopwords
+  text.df = text.df %>% 
+    anti_join(get_stopwords(), by = c("term" = "word"))
+  
+
+#Stem and Lematize Wording
+
+ text.df$term = stem_words(text.df$term) # Converts word to its stem, which might not be a word, such as "computational" >> "comput"
+# Stem completion can convert back to a word based on the most frequent original form
+
+text.df$term = lemmatize_words(text.df$term) # Similar to stemming, but returns a word and takes longer
+
+
+## Plot number of words remaining after processing names
+text.df %>% count(name) %>% 
+ggplot(aes(n, reorder(name, -n))) +
+  geom_col()+
+  labs(x = "Total words for each chocolate type", y = " Chocolate Type")
+  
+
+```
+
+The figure above shows the number of words remaining after cleaning and preprocessing of the textual data. Each chocolate seems to have a similar number of words remaining, so we are not too concerned with eliminating too many words from the data.
+
+### Weight term frequency, filter, and visualize terms using TFIDF
+The more often a term occurs in a name the more indicative it is of the name's content unless it term occurs frequently in most names. Term importance can be calculated as a combination of the local and global frequency using within-name term frequency (TF) and the inverse of its frequency across names (IDF). 
+Reference: https://www.tidytextmining.com/tfidf.html
+
+```{r}
+## Calculate term frequency and add tf_idf variables
+tfidf.text.df = text.df %>% count(name, term) %>% 
+  bind_tf_idf(term, name, n)
+
+
+tfidf.text.df
+
+```
+I created the plots from Exercise 5 to further understand the data.  The chunk below is taking the dataframe we created above, and getting the top tf_idf for each of the chocolates, so we can determine the most defining words for the chocolate. Because there were not a lot of words and many disinctive words, I set n (the number  of rows) in top_n to be 3. 
+ 
+```{r}
+## Plot most discriminating terms
+top.df = tfidf.text.df %>% group_by(name) %>% top_n(3, tf_idf) %>% 
+  ungroup() %>% 
+  mutate(name = as.factor(name))
+
+```
+The first plot below provides insight into the most defining words of each chocolate. Multiple words appear for some chocolates because multiple words can appear with a similar frequency in each chocolate. The second plot investigates the tf vs. the idf in each chocolate. This is useful for understanding how often a word appears for a particular chocolate vs. how often it appears across all of the chocolates. For example, it makes sense that blueberry is very frequent for the blueberry chocoalte, and it also does not appear in the other chocolates.
+
+```{r tf_idf, fig.height=4.5}
+ggplot(top.df, aes(reorder_within(term, tf_idf, within = name), tf_idf)) + ##increase the spacing between the words?
+  geom_col() +
+  coord_flip() +
+  facet_wrap(.~name, scales = "free")+
+  scale_x_reordered() 
+
+# Scatterplot of term frequency and inverse name frequency for each name
+ggplot(top.df, aes(idf, tf, size = tf_idf)) +
+  geom_point(shape = 21, size = .75) +
+  geom_text_repel(aes(label = term, size = tf_idf)) +
+  facet_wrap(.~name) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+## A single plot of the top tf_idf terms across all names
+ggplot(top.df, aes(idf, tf, size = tf_idf)) +
+  geom_point(shape = 21, size = 1) +
+  geom_text_repel(aes(label = term, size = tf_idf)) +
+  theme_bw() +
+  coord_trans(y="log") +
+  theme(legend.position = "none")
+
+```
+### LSA Space and Chocolate and Term Embeddings
+```{r}
+# Convert from tidy format to termXChocolate matrix
+tdm_weighted.tdmat = cast_tdm(tfidf.text.df, term, name, tf_idf)
+tdm_count.tdmat = cast_tdm(tfidf.text.df, term, name, n)
+
+lsa_model <- lsa(tdm_count.tdmat,  dims=dimcalc_share(share = .75)) 
+# dimcalc_share retains that dimensions that retain the required share of the total variance
+
+## Dimensions of the LSA space
+# The singular value has a maximum dimensions of the number of chocolate
+dim(lsa_model$tk) # Terms x LSA space
+
+
+```
+
+```{r}
+dim(lsa_model$dk) # Chococlate x LSA space
+
+```
+
+```{r}
+length(lsa_model$sk) # Singular values
+
+```
+
+```{r}
+## Shows expected value of word frequency for each chococolate
+as.textmatrix(lsa_model)
+```
+
+```{r}
+## Calculates LSA on tf_idf weighted terms
+lsa_model = lsa(tdm_weighted.tdmat,  dims=dimcalc_share(share = .75))
+
+rm(tdm_count.tdmat)
+```
+
+
+## Cluster chocolates by terms-AGNES using the LSA Embeddings 
+
+
+Once I had the textual data of chococlates from the LSA embeddings, I conducted AGNES hierarchical clustering using the embeddings.
+
+
+```{r}
+
+## Cosine similarity is equal to 1 for identical documents
+doc.similiarity.mat = cosine(t(lsa_model$dk)) # The d component describes the documents 
+
+## Calculates the mean tf_idf of each term and selects top 70 
+temp = tfidf.text.df %>% 
+  group_by(term) %>% 
+  summarise(m.tf_idf = mean(tf_idf)) %>% 
+  cbind(lsa_model$tk) %>% top_n(70, m.tf_idf) 
+
+# Cosine similarity of terms
+row.names(temp)= temp$term
+term.similiarity.mat = cosine(t(temp %>% select(-term, -m.tf_idf))) 
+
+doc.dissimilarity.dist = as.dist(1-doc.similiarity.mat)
+term.dissimilarity.dist = as.dist(1-term.similiarity.mat)
+
+## Hierarchical clustering
+# Setting method = ward.d2 corresponds to agnes clustering
+doc.cluster = hclust(doc.dissimilarity.dist, method = "ward.D2", members = NULL)
+dend_lsa <- as.dendrogram (doc.cluster)
+
+
+```
+
+
+```{r}
+## Build the dendrogram with the images of the chocolates for the LSA embeddings 
+
+image_lsa.df <- data.frame(y = seq(1,32, by = 2),
+                x = c(.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1, -.1),
+                image = c("Sweet Curry With Saffron.jpeg",
+                                 "Cognac.jpeg",  "Lemongrass with Ginger.jpeg","Jasmine.jpeg", "Rose.jpeg", "Vanilla.jpeg", "Cinnamon and Cayenne.jpeg", "Machu Picchu.jpeg", "Blueberry.jpeg", "Raspberry.jpeg", "Caramel Sprinkled With Grey Salt.jpeg", "Shiitake Mushroom.jpeg", "Espresso.jpeg", "Featured Single Origin.jpeg", "Cointreau.jpeg", "Earl Grey.jpeg"))
+
+choc_dend = ggdendrogram(dend_lsa, rotate = TRUE, theme_dendro = TRUE, cex = 100) #+ theme(axis.text.x = element_text(size=14))
+
+
+#ggdendrogram(dend1, rotate = TRUE, theme_dendro = TRUE)
+labels = ggplot(image_lsa.df, aes(x, y)) + geom_image(aes(image=image), size=.125) +  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "white"), axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.x = element_blank(),axis.title.x = element_text(color = "white"),
+axis.title.y = element_blank())  + xlim(-.25, .25) 
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 2),
+  area(t = 1, l = 3, b = 1, r = 4)
+)
+
+
+
+labels+ choc_dend +plot_layout(design = layout)
+
+```
+## Cluster chocolates by terms-AGNES using the GLOVE Embeddings 
+I wanted to see how the embeddings used changes the outcome of the dendrogram, so I created the same dendrogram using the GLOVE embeddings. You should only need to read in the GLOVE Embeddings once as well. 
+
+
+Import the glove embeddings (should only need to do this once!)
+```{r}
+## Similar to sentiment lexicon, word embeddings can be added to describe the terms in documents
+
+glove = read_delim(file = "glove.6B/glove.6B.300d.txt", 
+                   progress =FALSE,
+                    col_names = FALSE, delim = " ", quote = "")
+ names(glove)[1] = "token"
+glovec.text.df = text.df %>% 
+  inner_join(glove, by=c("term" = "token"))
+```
+
+
+```{r}
+## Document embeddings can be created by averaging the term embedding
+s.glovec.text.df = glovec.text.df %>% 
+  gather(key = glovec_id, value = glovalue, contains("X")) %>% 
+  group_by(name, glovec_id) %>% 
+  summarise(m.glovalue = mean(glovalue)) %>% 
+  spread(key = glovec_id, value = m.glovalue) %>% 
+  ungroup()
+
+## Calculate document distance based on cosine similarity of generic embedding 
+
+doc.similiarity.mat = cosine(t(s.glovec.text.df %>% select(contains("X")) %>% as.matrix()))  
+row.names(doc.similiarity.mat) = as.vector(s.glovec.text.df$name)
+
+
+doc.dissimilarity.dist = as.dist(1-doc.similiarity.mat)
+
+doc.cluster = hclust(doc.dissimilarity.dist, method = "ward.D2", members = NULL)
+doc.cluster
+
+dend_glove <- as.dendrogram (doc.cluster)
+
+#ggdendrogram(dend_glove, rotate = TRUE, theme_dendro = TRUE)
+
+
+```
+
+
+```{r}
+## Build the dendrogram with the images of the chocolates for the GLOVE embeddings 
+image_glove.df <- data.frame(y = seq(1,32, by = 2),
+                x = c(.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1, -.1),
+                image = c("Lemongrass with Ginger.jpeg",
+                                 "Shiitake Mushroom.jpeg", "Cointreau.jpeg", "Sweet Curry With Saffron.jpeg", "Cognac.jpeg", "Raspberry.jpeg", "Caramel Sprinkled With Grey Salt.jpeg", "Cinnamon and Cayenne.jpeg", "Machu Picchu.jpeg", "Vanilla.jpeg", "Espresso.jpeg", "Featured Single Origin.jpeg", "Earl Grey.jpeg", "Rose.jpeg", "Blueberry.jpeg", "Jasmine.jpeg"))
+
+choc_dend = ggdendrogram(dend_glove, rotate = TRUE, theme_dendro = TRUE, cex = 100) 
+
+
+labels = ggplot(image_glove.df, aes(x, y)) + geom_image(aes(image=image), size=.125) +  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "white"), axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.x = element_blank(),axis.title.x = element_text(color = "white"),
+axis.title.y = element_blank())  + xlim(-.25, .25) 
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 2),
+  area(t = 1, l = 3, b = 1, r = 4)
+)
+
+
+
+labels+ choc_dend +plot_layout(design = layout)
+```
+
+
+## Clean and Prepare Morphological and Textural Features of Images
+
+My strategy for getting data on the images was to take the df we had built for the text-analysis and use the URLs to extract images from the website and then extract the image data. In this step, I am extracting the morphological features and textural features of images. The morphological feautres relate to physical structure of different regions of an image. The textural features investigate the spatial arrangements and and color intensities of an image. It relates to the patterns in the pixels themselves. 
+Description of the haralick features:
+asm - angular second moment --> measure of uniformity. Reaches it's highest point when grey level distribution has constant or periodic form 
+con - contrast --> measure of local variations in an image
+cor - correlation --> measure of image linearity (high correlation means very linear image)
+var - variance -- > variance in the textural
+idm - inverse difference moment  --> measure image homogeneity
+sav- sum average
+sva - sum variance 
+sen - sum entropy
+ent - entropy --> randomness in the intensity distribution 
+dva - difference variance
+den - difference entropy
+f12 - measure of correlation --> information measures of correlation
+f13- measuer of correlation --> information measures of correlation
+
+
+Download jpegs of chocolates (should only need to do this once)
+```{r}
+for (i in 1:nrow(df)) #using the previously constructed data frame, we can use the URLs to get the images and find the image features
+{
+  choc_name = df["name"][i,] #get the name of the chocolate
+  url = df["image_url"][i,] #get the url for the image of the chocolate 
+  download.file(url, paste(choc_name,".jpeg", sep=""), mode = "wb") #download the jpeg file
+  file_name = paste(choc_name,".jpeg", sep="") #save the jpeg file to the directory for easy access
+}
+
+```
+
+```{r}
+#this gets all of the necessary jpegs
+#for (i in 1:nrow(df))
+df_test = data.frame()
+
+# for (i in 1:nrow(df)) #using the previously constructed data frame, we can use the URLs to get the images and find the image features
+# {
+  choc_name = df["name"][1,] #get the name of the chocolate
+  
+  file_name = paste(choc_name,".jpeg", sep="")
+  Image = readImage(file_name) #this is where I had the issue with Cinnamon and Cayenne  
+  
+  Image3<-getFrame(Image,2) #I had an issue with the images being read in by R as a vpVideo, so I had t to grab a frame of the video for the proceeding functions to work. I noticed that the selected frame did not matter. So, in this instance we are picking frame 2. 
+  x = thresh(Image3, w=45, h=45, offset=0.05) #This creates the "window" of the image. This is important because all of the images need to be the same size in the proceeding steps. I figured out whcih dimensions worked from trial and error. 
+  
+  x = opening(x, makeBrush(3, shape='diamond')) #opening function removes morphological noise from images and removes small objects from the background. I adjusted the size and shape to read in the image as accuratley as possible
+  x = bwlabel(x) #Image must be 2D to be compute the morphological and textur features 
+  #display(x)  #this will show you what the image so you can see how R reads the image
+  fts = computeFeatures.shape(x) #computing morphological (shape) features of the image 
+
+#display(x)
+  
+#begin building the morphological features
+morph = fts %>%
+  as_tibble() %>%
+  mutate(across(.cols = everything(), list(mean = mean, sd = sd))) %>% #extract the mean and standard o deviation of each of the morphological features because they return multiple rows 
+  mutate(count = n()) %>% #get the count of the number of "clusters" identified in the images
+  select(s.area_mean:s.radius.max_mean) #extract only the mean and standard deviatinos of features
+
+morph = head(morph, 1) #keep only the first row 
+morph[is.na(morph)] = 0
+
+morph$name = choc_name #so that I can join with haralick features later
+
+text_feat <- computeFeatures.haralick(x, Image3)# get textural features of the images
+
+text_feat.df = as.data.frame(text_feat) #convert to df to simplify manipulation 
+
+haralickFeatures = text_feat.df %>% 
+  as_tibble() %>%
+  mutate(across(.cols = everything(), list(mean = mean, sd = sd))) %>%
+  select(h.asm.s1_mean:h.f13.s2_sd) #remove columns taht are not a mean or sd value
+haralickFeatures  = head(haralickFeatures, 1) #remove the first row since it duplicates
+
+haralickFeatures$name = choc_name #assign chocolate name so that it can merge with morph features later
+
+haralickFeatures[is.na(haralickFeatures)] = 0 #turn any NAs to 0
+#print(haralickFeatures)
+
+final = merge(haralickFeatures, morph) #merge the morphological and haralick features for the chocolate
+
+df_test = rbind(df_test, final) #Merge with other rows
+
+# }
+
+```
+
+I investigated the columns to see what information might be worth keeping in. Based on what I knew about the data, I knew that the most obvious difference in chocolates was with the cinnamon/cayenne and the other flavors. So, I was sure to keep columns that signified this difference. I dropped columns that had a very large scale that might heavily skew the distances in the data, such as the sum of the averages and the sum of the variances. 
+
+```{r}
+drop.df = df_test %>%  #drop columns that were not relevant and increased dendrogram scale considerably
+  select(-h.sva.s1_mean, -h.sva.s1_sd, -h.sav.s1_mean, -h.sav.s1_sd, -h.sva.s2_mean, -h.sva.s2_sd, -h.sav.s2_mean, -h.sav.s2_sd, -s.area_mean, -s.area_sd, -s.perimeter_mean, -s.perimeter_sd, -s.area_mean, -s.area_sd)
+
+#I kept all of the textural features
+
+
+drop.df
+
+drop.df[2,1] = "Caramel with Salt"
+drop.df[8,1] = "Single Origin"
+drop.df[10,1] = "Lemon and Ginger"
+```
+
+Prepare data with removing NA and scaling.
+
+```{r}
+
+scaled.df = drop.df %>% 
+  drop_na() %>%  # Removes rows with missing data 
+  select(-name) %>%
+  scale() %>% as.data.frame()
+
+scaled.df
+
+```
+
+## Cluster chocolates and images-AGNES using the Textural and Morphological Features
+
+```{r}
+
+
+row.names(scaled.df) = as.vector(drop.df$name)
+
+
+res.dist = dist(scaled.df, method = "euclidean")
+hc2 <- hclust(res.dist, method = "ward.D2") #uses agnes method
+
+ dend_im <- as.dendrogram (hc2)
+
+#ggdendrogram(dend_im, rotate = TRUE, theme_dendro = TRUE)
+
+
+
+```
+ The results of the images are somewhat as expected! We can see that cinnamon/cayenne is in its own grouping, which makes sense because it is powdered and has no luster in the image. Interestingly enough, something I noticed was how Espresso is not with Cointreau, Cognac and Vanilla. This reveals some noise in the data because Espresso has quite a bit of shine on the top which make the algorithm think the Espresso has a lot of parts on it in the middle similar to the Blueberry and Earl Grey. 
+ 
+ 
+
+
+ 
+```{r}
+
+ image_mt.df <- data.frame(y = seq(1,32, by = 2),
+                x = c(.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1,-.1,.1, -.1),
+                image = c("Cinnamon and Cayenne.jpeg",
+                                 "Shiitake Mushroom.jpeg", "Sweet Curry With Saffron.jpeg", "Cointreau.jpeg", "Cognac.jpeg", "Vanilla.jpeg", "Featured Single Origin.jpeg", "Caramel Sprinkled With Grey Salt.jpeg", "Raspberry.jpeg", "Machu Picchu.jpeg", "Jasmine.jpeg", "Lemongrass with Ginger.jpeg", "Blueberry.jpeg", "Espresso.jpeg", "Earl Grey.jpeg", "Rose.jpeg"))
+
+choc_dend = ggdendrogram(dend_im, rotate = TRUE, theme_dendro = TRUE, cex = 100) 
+
+
+#ggdendrogram(dend1, rotate = TRUE, theme_dendro = TRUE)
+labels = ggplot(image_mt.df , aes(x, y)) + geom_image(aes(image=image), size=.125) +  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "white"), axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.x = element_blank(),axis.title.x = element_text(color = "white"),
+axis.title.y = element_blank())  + xlim(-.25, .25) 
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 2),
+  area(t = 1, l = 3, b = 1, r = 4)
+)
+
+
+
+labels+ choc_dend +plot_layout(design = layout)
+```
+
+Now that all of the dendrograms are made, I wanted to ensure that they have all the same labels just in case!
+```{r}
+sort(labels(dend1)) == sort(labels(dend2)) #verify all the labels are the same
+
+```
+
+## Tanglegrams
+
+### Tanglegram of GLOVE word embeddings and Images
+
+The engtanglement measures the quality of the alignment between the two trees. The lower the entanglement is, the better  (1 =full entanglement, 0 = no entanglement)
+```{r}
+
+dend = dendlist(dend1, dend2) %>% #left hand side is the textual data, and the right hand side are the images 
+  untangle(method = "step1side") %>% # Find the best alignment layout
+  tanglegram(lab.cex = .9, margin_inner = 9, common_subtrees_color_branches = TRUE) # Color common branches)                       # Draw the two dendrograms
+dend %>% plot(main = paste("entanglement =", round(entanglement(dend), 2))) #the engtanglement measures the quality of the alignment between the two trees. The lower the entanglement is, the better  (1 =full entanglement, 0 = no entanglement)
+
+
+```
+
+My conclusion for this tanglegram is that it is "better than nothing". 
+
+
+### Tanglegram of Images and LSA embeddings
+
+```{r}
+dend = dendlist(dend2, dend3) %>% #left hand side is the textual data, and the right hand side are the images 
+  untangle(method = "step1side") %>% # Find the best alignment layout
+  tanglegram(lab.cex = .9, margin_inner = 9, common_subtrees_color_branches = TRUE) # Color common branches)                       # Draw the two dendrograms
+dend %>% plot(main = paste("entanglement =", round(entanglement(dend), 2))) #the engtanglement measures the quality of the alignment between the two trees. The lower the entanglement is, the better  (1 =full entanglement, 0 = no entanglement)
+
+```
+
+
+Tanglegram for the LSA and images reveal a relatively high entanglement. Not much commonality in the clustering results. 
+
+### Tanglegram of LSA embeddings and GLOVE embeddings
+```{r}
+dend = dendlist(dend1, dend3) %>% #left hand side is the textual data, and the right hand side are the images 
+  untangle(method = "step1side") %>% # Find the best alignment layout
+  tanglegram(lab.cex = .9, margin_inner = 9, common_subtrees_color_branches = TRUE) # Color common branches)                       # Draw the two dendrograms
+dend %>% plot(main = paste("entanglement =", round(entanglement(dend), 2))) #the engtanglement measures the quality of the alignment between the two trees. The lower the entanglement is, the better  (1 =full entanglement, 0 = no entanglement)
+
+
+```
+
+Tanglegram for the LSA and word embeddings reveal a relatively high entanglement. Not much commonality in the clustering results. An important takeaway is that the approach taken with text-analysis can highly vary the constructed dendrogram. 
